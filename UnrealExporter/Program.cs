@@ -636,12 +636,23 @@ public class UnrealExporter
 
                 var sortedPaths = pathsForGameTitle.OrderBy(path =>
                 {
-                    string dateTimeFromFileName = Path.GetFileNameWithoutExtension(path).SubstringAfter(config.GameTitle).Trim();
-                    string date = dateTimeFromFileName.Split(" ")[0];
-                    string time = dateTimeFromFileName.Split(" ")[1].Replace("-", ":");
-                    double unixTime = DateTime.Parse($"{date} {time}").Subtract(new DateTime(1970, 1, 1)).TotalSeconds;
-                    return unixTime;
-                });
+                    string fileName = Path.GetFileNameWithoutExtension(path);
+                    string pattern = @"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})";
+                    Match match = Regex.Match(fileName, pattern);
+
+                    if (match.Success)
+                    {
+                        string dateTimeString = match.Groups[1].Value;
+                        string format = "yyyy-MM-dd_HH-mm-ss";
+
+                        if (DateTime.TryParseExact(dateTimeString, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime parsedDate))
+                        {
+                            return ((DateTimeOffset)parsedDate).ToUnixTimeSeconds();
+                        }
+                    }
+                    return 0.0;
+                }
+                );
 
                 var latestCheckpointPath = sortedPaths.Last();
 
@@ -681,13 +692,16 @@ public class UnrealExporter
     {
         Console.WriteLine();
         var newCheckpointJson = JsonConvert.SerializeObject(newCheckpointDict, Formatting.Indented);
-        var dateStamp = DateTime.Now.ToString("MM-dd-yyyy HH-mm");
+        var dateStamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+
         string checkpointsDirPath = Path.Combine(Directory.GetCurrentDirectory(), "checkpoints");
         if (!Directory.Exists(checkpointsDirPath))
         {
             Directory.CreateDirectory(checkpointsDirPath);
         }
-        var checkpointFileName = $"{config.GameTitle} {dateStamp}.ckpt";
+
+        var checkpointFileName = $"{config.GameTitle}_{dateStamp}.ckpt";
+
         File.WriteAllText(Path.Combine(checkpointsDirPath, checkpointFileName), newCheckpointJson);
         Console.WriteLine($"Created checkpoint file: {checkpointFileName}");
     }
