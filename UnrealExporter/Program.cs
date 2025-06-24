@@ -1,4 +1,4 @@
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using System.Globalization;
 using CUE4Parse.Encryption.Aes;
 using CUE4Parse.FileProvider;
@@ -112,7 +112,7 @@ public class UnrealExporter
             int index = 0;
             foreach (ConfigObj obj in configObjs)
             {
-                obj.ConfigFileName = path.Split(Path.DirectorySeparatorChar).Last();
+                obj.ConfigFileName = Path.GetFileName(path);
                 obj.ConfigObjectIndex = index;
                 index++;
             }
@@ -144,7 +144,7 @@ public class UnrealExporter
         // Also check items that were passed in args
         for (int i = 0; i < allConfigFilePaths.Length; i++)
         {
-            string fileName = allConfigFilePaths[i].Split(Path.DirectorySeparatorChar).Last();
+            string fileName = Path.GetFileName(allConfigFilePaths[i]);
             if (fileName.Length > longestFileName)
             {
                 longestFileName = fileName.Length;
@@ -160,7 +160,7 @@ public class UnrealExporter
         List<string> paddedFileNames = [];
         foreach (string filePath in allConfigFilePaths)
         {
-            string fileName = filePath.Split(Path.DirectorySeparatorChar).Last();
+            string fileName = Path.GetFileName(filePath);
             paddedFileNames.Add(fileName.PadRight(longestFileName + 1, ' '));
         }
 
@@ -236,7 +236,7 @@ public class UnrealExporter
                     {
                         if (selectedOptions[i])
                         {
-                            result.Add(allConfigFilePaths[i - 1].Split(Path.DirectorySeparatorChar).Last().Split(".")[0]);
+                            result.Add(Path.GetFileNameWithoutExtension(allConfigFilePaths[i - 1]));
                         }
                     }
                     Console.WriteLine();
@@ -283,7 +283,7 @@ public class UnrealExporter
                             allConfigObjs.Add(configObj);
                         }
                         totalConfigFiles++;
-                        Console.WriteLine($"{filePath.Split(Path.DirectorySeparatorChar).Last()} ({configObjsInFile.Count} object{(configObjsInFile.Count > 1 ? "s" : "")})");
+                        Console.WriteLine($"{Path.GetFileName(filePath)} ({configObjsInFile.Count} object{(configObjsInFile.Count > 1 ? "s" : "")})");
                     }
                 }
             }
@@ -636,7 +636,7 @@ public class UnrealExporter
 
                 var sortedPaths = pathsForGameTitle.OrderBy(path =>
                 {
-                    string dateTimeFromFileName = path.Split(Path.DirectorySeparatorChar).Last().Split(".").First().SubstringAfter(config.GameTitle)[1..];
+                    string dateTimeFromFileName = Path.GetFileNameWithoutExtension(path).SubstringAfter(config.GameTitle).Trim();
                     string date = dateTimeFromFileName.Split(" ")[0];
                     string time = dateTimeFromFileName.Split(" ")[1].Replace("-", ":");
                     double unixTime = DateTime.Parse($"{date} {time}").Subtract(new DateTime(1970, 1, 1)).TotalSeconds;
@@ -648,7 +648,7 @@ public class UnrealExporter
                 if (File.Exists(latestCheckpointPath))
                 {
                     useCheckpoint = true;
-                    Console.WriteLine($"Using checkpoint: latest ({latestCheckpointPath.Split(Path.DirectorySeparatorChar).Last()})");
+                    Console.WriteLine($"Using checkpoint: latest ({Path.GetFileName(latestCheckpointPath)})");
                     var fromFile = File.ReadAllText(latestCheckpointPath);
                     var loadedCheckpoint = JsonConvert.DeserializeObject<Dictionary<string, long>>(fromFile);
                     return loadedCheckpoint ?? [];
