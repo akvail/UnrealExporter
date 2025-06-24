@@ -634,7 +634,8 @@ public class UnrealExporter
                     return [];
                 }
 
-                var sortedPaths = pathsForGameTitle.OrderBy(path =>
+                var validCheckpoints = new List<(string Path, double UnixTime)>();
+                foreach (var path in pathsForGameTitle)
                 {
                     string fileName = Path.GetFileNameWithoutExtension(path);
                     string pattern = @"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})";
@@ -647,14 +648,22 @@ public class UnrealExporter
 
                         if (DateTime.TryParseExact(dateTimeString, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime parsedDate))
                         {
-                            return ((DateTimeOffset)parsedDate).ToUnixTimeSeconds();
+                            validCheckpoints.Add((path, ((DateTimeOffset)parsedDate).ToUnixTimeSeconds()));
                         }
                     }
-                    return 0.0;
                 }
-                );
 
-                var latestCheckpointPath = sortedPaths.Last();
+                var latestCheckpoint = validCheckpoints
+                    .OrderBy(c => c.UnixTime)
+                    .LastOrDefault();
+
+                if (latestCheckpoint.Path == null)
+                {
+                    Console.WriteLine($"ERROR: Found checkpoints for \"{config.GameTitle}\", but none have a valid timestamp. Ignoring...");
+                    return [];
+                }
+                var latestCheckpointPath = latestCheckpoint.Path;
+
 
                 if (File.Exists(latestCheckpointPath))
                 {
