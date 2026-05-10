@@ -13,9 +13,8 @@ using CUE4Parse.UE4.Localization;
 using System.Collections.Concurrent;
 using CUE4Parse.MappingsProvider;
 using JSBeautifyLib;
-using System.Runtime.InteropServices;
-using OodleDotNet;
 using CUE4Parse.Compression;
+using System.Reflection;
 
 namespace UnrealExporter;
 
@@ -28,12 +27,23 @@ public class UnrealExporter
     private static int totalRegexMatches = 0;
     private static int totalExportedFiles = 0;
     private static bool useCheckpoint = false;
+    private static string RootDir = AppContext.BaseDirectory;
 
     public static void Main(string[] args)
     {
+
+#if DEBUG
+        // During development (dotnet run), BaseDirectory is bin\Debug\net8.0
+        // Adjust to project root
+        RootDir = Path.GetFullPath(Path.Combine(RootDir, @"..\..\..\.."));
+#endif
+
+        // For Oodle to work from outside of project directory
+        Directory.SetCurrentDirectory(RootDir);
+
         double trueStart = Now();
 
-        // Initialize packages (from FModel's InitOodle())
+        // Initialize CUE4Parse dependencies
         InitOodle();
         InitZlib();
 
@@ -250,12 +260,11 @@ public class UnrealExporter
     public static List<ConfigObj> LoadAllConfigs(string[] args)
     {
         List<ConfigObj> allConfigObjs = [];
-        string[] allConfigFilePaths = Directory.GetFiles(Path.Combine(Directory.GetCurrentDirectory(), "configs"));
-
+        string[] allConfigFilePaths = Directory.GetFiles($"{RootDir}\\configs");
         bool isReleaseMode = false;
 
 #if !DEBUG
-            isReleaseMode = true;
+        isReleaseMode = true;
 #endif
 
         if (args.Length > 0 || isReleaseMode)
@@ -292,7 +301,7 @@ public class UnrealExporter
             {
                 foreach (var arg in args)
                 {
-                    List<ConfigObj>? configObjsInFile = LoadConfigFile(Path.Combine(Directory.GetCurrentDirectory(), "configs", $"{arg}.json"));
+                    List<ConfigObj>? configObjsInFile = LoadConfigFile($"{RootDir}\\configs\\{arg}.json");
 
                     if (configObjsInFile != null)
                     {
@@ -312,7 +321,7 @@ public class UnrealExporter
         else
         {
             Console.WriteLine("No config file(s) specified. Defaulting to config.json...");
-            List<ConfigObj>? configObjsInFile = LoadConfigFile(Path.Combine(Directory.GetCurrentDirectory(), "configs", "config.json"));
+            List<ConfigObj>? configObjsInFile = LoadConfigFile($"{RootDir}\\configs\\config.json");
 
             if (configObjsInFile != null)
             {
@@ -357,6 +366,7 @@ public class UnrealExporter
     public static AbstractFileProvider CreateProvider(ConfigObj config, EGame selectedVersion)
     {
         // Load CUE4Parse
+        // TODO: Ignore mods (all folders within /Content/Paks)
         var provider = new DefaultFileProvider(config.PaksDir, SearchOption.AllDirectories, true, new VersionContainer(selectedVersion));
         provider.Initialize();
 
@@ -376,7 +386,7 @@ public class UnrealExporter
         }
 
         // TEMP (need to fix patchProvider for utoc/ucas support). For now it's not guaranteed that the patch paks will be reconciled correctly.
-        string pathToMapping = Path.Combine(Directory.GetCurrentDirectory(), "mappings", $"{config.GameTitle}.usmap");
+        string pathToMapping = $"{RootDir}\\mappings\\{config.GameTitle}.usmap";
         if (File.Exists(pathToMapping))
         {
             Console.WriteLine($"Using mapping file: {pathToMapping}");
@@ -388,7 +398,7 @@ public class UnrealExporter
         patchProvider.Load(provider);
 
         // Add mapping file based on GameTitle if provided
-        string pathToMappingFile = Path.Combine(Directory.GetCurrentDirectory(), "mappings", $"{config.GameTitle}.usmap");
+        string pathToMappingFile = $"{RootDir}\\mappings\\{config.GameTitle}.usmap";
         if (File.Exists(pathToMappingFile))
         {
             Console.WriteLine($"Using mapping file: {pathToMappingFile}");
@@ -430,10 +440,9 @@ public class UnrealExporter
             // "D:\UnrealExporter\output\Hotta\Content\Resources\UI\Activity\Activity\DT_Activityquest_Balance"
             var outputPath = Path.Combine(outputDir, fileName);
 
-            string regexMatch =
+            List<string> regexMatches =
                 config.Export
-                .FirstOrDefault(path => new Regex("^" + path[..path.LastIndexOf(':')] + "$", RegexOptions.IgnoreCase)
-                .IsMatch(file.Value.Path), "");
+                .FindAll(path => new Regex("^" + path[..path.LastIndexOf(':')] + "$", RegexOptions.IgnoreCase).IsMatch(file.Value.Path));
 
             bool isExclude =
                 config.Exclude
@@ -451,21 +460,23 @@ public class UnrealExporter
 
             if (config.CreateNewCheckpoint) newCheckpointDict.TryAdd(file.Value.Path, file.Value.Size);
 
-            if (regexMatch.Length > 0 && !isExclude && isChanged)
+            if (regexMatches.Count > 0 && !isExclude && isChanged)
             {
                 // "uasset"
                 var fileType = file.Value.Path.SubstringAfterLast('.').ToLower();
 
-                // "json" etc.
-                var outputType = regexMatch.SubstringAfterLast(':').ToLower();
-
-                try
+                foreach (var regexMatch in regexMatches)
                 {
-                    switch (fileType)
+                    // "json" etc.
+                    var outputType = regexMatch.SubstringAfterLast(':').ToLower();
+
+                    try
                     {
-                        // Referencing CUE4ParseViewModel.cs from Fmodel source code
-                        case "uasset":
-                        case "umap":
+                        switch (fileType)
+                        {
+                            // Referencing CUE4ParseViewModel.cs from Fmodel source code
+                            case "uasset":
+                            case "umap":
                             {
                                 var allObjects = provider.LoadAllObjects(file.Value.Path);
 
@@ -490,13 +501,15 @@ public class UnrealExporter
                                                 {
                                                     data.SaveTo(stream);
                                                 }
+
                                                 Interlocked.Increment(ref totalExportedFiles);
 
                                                 break;
                                             }
                                             else
                                             {
-                                                Console.WriteLine($"ERROR: Failed to export {file.Value.Path} (not a valid image bitmap).");
+                                                Console.WriteLine(
+                                                    $"ERROR: Failed to export {file.Value.Path} (not a valid image bitmap).");
                                             }
                                         }
                                         else
@@ -527,9 +540,12 @@ public class UnrealExporter
                                     {
                                         Parallel.ForEach(assets, kvp =>
                                         {
-                                            if (config.LogOutputs) Console.WriteLine("=> " + outputPath + "." + kvp.Key.SubstringAfterLast('.'));
+                                            if (config.LogOutputs)
+                                                Console.WriteLine("=> " + outputPath + "." +
+                                                                  kvp.Key.SubstringAfterLast('.'));
                                             if (!Directory.Exists(outputDir)) Directory.CreateDirectory(outputDir);
-                                            File.WriteAllBytes(outputPath + "." + kvp.Key.SubstringAfterLast('.'), kvp.Value);
+                                            File.WriteAllBytes(outputPath + "." + kvp.Key.SubstringAfterLast('.'),
+                                                kvp.Value);
                                             Interlocked.Increment(ref totalExportedFiles);
                                         });
                                     }
@@ -554,7 +570,7 @@ public class UnrealExporter
 
                                 break;
                             }
-                        case "locres":
+                            case "locres":
                             {
                                 if (outputType == "json" && provider.TryCreateReader(file.Value.Path, out var archive))
                                 {
@@ -565,9 +581,10 @@ public class UnrealExporter
                                     File.WriteAllText(outputPath + ".json", json);
                                     Interlocked.Increment(ref totalExportedFiles);
                                 }
+
                                 break;
                             }
-                        case "js":
+                            case "js":
                             {
                                 if (outputType == fileType && provider.TrySaveAsset(file.Value.Path, out var data))
                                 {
@@ -580,8 +597,47 @@ public class UnrealExporter
                                     File.WriteAllText(outputPath + ".js", beautifier.GetResult());
                                     Interlocked.Increment(ref totalExportedFiles);
                                 }
+
                                 break;
                             }
+                        case "upluginmanifest":
+                        case "uproject":
+                        case "manifest":
+                        case "uplugin":
+                        case "archive":
+                        case "vmodule":
+                        case "verse":
+                        case "html":
+                        case "json":
+                        case "ini":
+                        case "txt":
+                        case "log":
+                        case "bat":
+                        case "dat":
+                        case "cfg":
+                        case "ide":
+                        case "ipl":
+                        case "zon":
+                        case "xml":
+                        case "css":
+                        case "csv":
+                        case "pem":
+                        case "tps":
+                        case "lua":
+                        case "po":
+                        case "h":
+                        {
+                            if (outputType == fileType && provider.TrySaveAsset(file.Value.Path, out var data))
+                            {
+                                if (config.LogOutputs) Console.WriteLine("=> " + outputPath + "." + outputType);
+                                using var stream = new MemoryStream(data) { Position = 0 };
+                                using var reader = new StreamReader(stream);
+                                if (!Directory.Exists(outputDir)) Directory.CreateDirectory(outputDir);
+                                File.WriteAllText(outputPath + "." + outputType, reader.ReadToEnd());
+                                Interlocked.Increment(ref totalExportedFiles);
+                            }
+                            break;
+                        }
                         case "db":
                             {
                                 if (outputType == fileType && provider.TrySaveAsset(file.Value.Path, out var data))
@@ -593,17 +649,19 @@ public class UnrealExporter
                                     File.WriteAllBytes(outputPath + ".db", data);
                                     Interlocked.Increment(ref totalExportedFiles);
                                 }
+
                                 break;
                             }
+                        }
                     }
-                }
-                catch (AggregateException ae)
-                {
-                    Console.WriteLine(ae.Message);
-                    // Console.WriteLine($"ERROR: File cannot be opened: {file.Value.Path}. Possible issues include incorrect UE version in config.json, missing mapping file, or this file type is not supported.");
-                }
+                    catch (AggregateException ae)
+                    {
+                        Console.WriteLine(ae.Message);
+                        // Console.WriteLine($"ERROR: File cannot be opened: {file.Value.Path}. Possible issues include incorrect UE version in config.json, missing mapping file, or this file type is not supported.");
+                    }
 
-                Interlocked.Increment(ref totalRegexMatches);
+                    Interlocked.Increment(ref totalRegexMatches);
+                }
             }
         });
 
@@ -622,10 +680,10 @@ public class UnrealExporter
     {
         if (config?.UseCheckpointFile?.Length > 0)
         {
-            string checkpointPath = Path.Combine(Directory.GetCurrentDirectory(), config.UseCheckpointFile);
+            string checkpointPath = $"{RootDir}\\{config.UseCheckpointFile}";
             if (config.UseCheckpointFile.Equals("latest"))
             {
-                string[] allCheckpointPaths = Directory.GetFiles(Path.Combine(Directory.GetCurrentDirectory(), "checkpoints"));
+                string[] allCheckpointPaths = Directory.GetFiles($"{RootDir}\\checkpoints");
                 var pathsForGameTitle = allCheckpointPaths.Where(path => path.Contains(config.GameTitle));
 
                 if (!pathsForGameTitle.Any())
@@ -701,9 +759,8 @@ public class UnrealExporter
     {
         Console.WriteLine();
         var newCheckpointJson = JsonConvert.SerializeObject(newCheckpointDict, Formatting.Indented);
-        var dateStamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
-
-        string checkpointsDirPath = Path.Combine(Directory.GetCurrentDirectory(), "checkpoints");
+        var dateStamp = DateTime.Now.ToString("MM-dd-yyyy HH-mm");
+        string checkpointsDirPath = $"{RootDir}\\checkpoints";
         if (!Directory.Exists(checkpointsDirPath))
         {
             Directory.CreateDirectory(checkpointsDirPath);
